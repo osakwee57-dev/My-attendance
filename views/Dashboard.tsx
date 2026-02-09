@@ -10,16 +10,24 @@ import { AuthUser, Profile } from '../types';
 
 interface DashboardProps {
   user: AuthUser;
+  onUpdateUser: (user: AuthUser) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ user }) => {
+const LEVELS = ["100 Level", "200 Level", "300 Level", "400 Level", "500 Level"];
+
+const Dashboard: React.FC<DashboardProps> = ({ user, onUpdateUser }) => {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [roster, setRoster] = useState<Profile[]>([]);
   const [recentSessions, setRecentSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Level Editing State
+  const [isEditingLevel, setIsEditingLevel] = useState(false);
+  const [newLevel, setNewLevel] = useState(user.level);
+  const [isUpdatingLevel, setIsUpdatingLevel] = useState(false);
 
   // HOC Active Session State
   const [activeSession, setActiveSession] = useState<any>(null);
@@ -27,7 +35,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [lecturerName, setLecturerName] = useState('');
   const [isStarting, setIsStarting] = useState(false);
   
-  // Student Discovery State (Requested: activeNotice)
+  // Student Discovery State
   const [activeNotice, setActiveNotice] = useState<any>(null);
   const [showCodeInput, setShowCodeInput] = useState(false);
   const [entryCode, setEntryCode] = useState('');
@@ -40,7 +48,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       setError(null);
       
       const rosterData = await fetchDepartmentRoster(user.department);
-      setRoster(rosterData);
+      // Ensure rosterData elements have is_hoc even if false
+      const typedRoster = rosterData.map(r => ({ ...r, is_hoc: r.is_hoc ?? false }));
+      setRoster(typedRoster);
 
       if (user.is_hoc) {
         const { data: sessionData } = await supabase
@@ -92,11 +102,13 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
         .on('postgres_changes', { 
             event: 'INSERT', 
             schema: 'public', 
-            table: 'attendance_sessions',
-            filter: `department=eq.${user.department}` 
+            table: 'attendance_sessions'
         }, (payload) => {
             const session = payload.new as any;
-            if (session.is_active && session.level === user.level && !user.is_hoc) {
+            if (session.is_active && 
+                session.department === user.department && 
+                session.level === user.level && 
+                !user.is_hoc) {
                 setActiveNotice(session);
             }
         })
@@ -134,7 +146,34 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
         supabase.removeChannel(channel);
       };
     }
-  }, [user, searchParams]);
+  }, [user.department, user.level, user.is_hoc, activeNotice?.id]);
+
+  const handleUpdateLevel = async () => {
+    if (newLevel === user.level) {
+      setIsEditingLevel(false);
+      return;
+    }
+    
+    setIsUpdatingLevel(true);
+    try {
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ level: newLevel })
+        .eq('id', user.id);
+
+      if (updateError) throw updateError;
+      
+      onUpdateUser({ ...user, level: newLevel });
+      setIsEditingLevel(false);
+      setSuccess("Academic level updated.");
+      setTimeout(() => setSuccess(null), 3000);
+      loadData(); // Reload to fetch sessions for new level
+    } catch (err: any) {
+      setError("Failed to update level.");
+    } finally {
+      setIsUpdatingLevel(false);
+    }
+  };
 
   const generateSessionCode = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; 
@@ -361,10 +400,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
   const renderStudentDashboard = () => (
     <div className="space-y-8 animate-in fade-in duration-600">
-      {/* Requested Active Notice Component */}
+      {/* Requested Active Notice Component (Orange Alert) */}
       {activeNotice && (
         <div className="bg-orange-500 text-white p-6 rounded-3xl shadow-lg mb-8 animate-bounce border-4 border-white/20">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="space-y-1">
               <p className="font-black text-lg tracking-tight uppercase">🔔 ACTIVE SESSION: {activeNotice.course_code}</p>
               <p className="text-sm font-bold opacity-90 uppercase tracking-widest">Lecturer: {activeNotice.lecturer_name}</p>
@@ -372,7 +411,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
             {!showCodeInput && (
               <button 
                 onClick={() => setShowCodeInput(true)} 
-                className="bg-white text-orange-600 px-6 py-2 rounded-full text-xs font-black uppercase tracking-widest shadow-md hover:bg-orange-50 transition-colors"
+                className="bg-white text-orange-600 px-6 py-2 rounded-full text-xs font-black uppercase tracking-widest shadow-md hover:bg-orange-50 transition-colors w-full sm:w-auto"
               >
                 Enter Code Now
               </button>
@@ -401,7 +440,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                 value={entryCode}
                 onChange={(e) => setEntryCode(e.target.value.toUpperCase())}
                 placeholder="------"
-                className="w-full bg-slate-950 border-2 border-slate-800 rounded-3xl px-8 py-8 text-indigo-400 font-mono font-black text-6xl tracking-[0.5em] focus:border-indigo-600 outline-none text-center shadow-inner uppercase transition-all"
+                className="w-full bg-slate-950 border-2 border-slate-800 rounded-3xl px-8 py-8 text-indigo-400 font-mono font-black text-4xl sm:text-6xl tracking-[0.3em] sm:tracking-[0.5em] focus:border-indigo-600 outline-none text-center shadow-inner uppercase transition-all"
               />
             </div>
             <button
@@ -436,10 +475,46 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
          </div>
          <h2 className="text-3xl font-black text-slate-900 tracking-tighter text-center uppercase mb-2">{user.name}</h2>
          <p className="text-slate-400 font-mono text-sm mb-10">{user.matric_number}</p>
-         <div className="flex flex-wrap justify-center gap-4 w-full max-w-lg">
-            <div className="flex-1 bg-slate-50 p-6 rounded-3xl border border-slate-100 text-center">
+         
+         <div className="flex flex-wrap justify-center gap-4 w-full max-w-lg mb-8">
+            <div className="flex-1 bg-slate-50 p-6 rounded-3xl border border-slate-100 text-center relative group">
                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Status</p>
-               <p className="text-sm font-black text-slate-900 uppercase">{user.level}</p>
+               {isEditingLevel ? (
+                 <div className="flex flex-col gap-2 animate-in fade-in duration-200">
+                   <select 
+                     value={newLevel}
+                     onChange={(e) => setNewLevel(e.target.value)}
+                     className="bg-white border border-indigo-600 rounded px-2 py-1 text-sm font-black text-slate-900 outline-none"
+                   >
+                     {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+                   </select>
+                   <div className="flex gap-2 justify-center">
+                     <button 
+                       onClick={handleUpdateLevel} 
+                       disabled={isUpdatingLevel}
+                       className="text-[9px] font-black text-emerald-600 uppercase hover:underline"
+                     >
+                       {isUpdatingLevel ? 'Updating...' : 'Save'}
+                     </button>
+                     <button 
+                       onClick={() => setIsEditingLevel(false)} 
+                       className="text-[9px] font-black text-slate-400 uppercase hover:underline"
+                     >
+                       Cancel
+                     </button>
+                   </div>
+                 </div>
+               ) : (
+                 <>
+                   <p className="text-sm font-black text-slate-900 uppercase">{user.level}</p>
+                   <button 
+                     onClick={() => setIsEditingLevel(true)}
+                     className="absolute top-2 right-2 text-[8px] font-black text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity uppercase tracking-widest"
+                   >
+                     Edit
+                   </button>
+                 </>
+               )}
             </div>
             <div className="flex-1 bg-slate-50 p-6 rounded-3xl border border-slate-100 text-center">
                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Department</p>
@@ -452,16 +527,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-12 selection:bg-indigo-500/30 no-print">
-      <header className="mb-12 flex items-end justify-between border-b-4 border-slate-900 pb-10">
+      <header className="mb-12 flex flex-col sm:flex-row items-start sm:items-end justify-between border-b-4 border-slate-900 pb-10 gap-6">
         <div className="space-y-2">
           <div className="flex items-center gap-3">
              <div className="bg-indigo-600 text-white px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest">PRO TERMINAL</div>
-             <div className="text-slate-400 text-[10px] font-black uppercase tracking-widest">v6.8.5-LIVE</div>
+             <div className="text-slate-400 text-[10px] font-black uppercase tracking-widest">v6.8.8-LIVE</div>
           </div>
-          <h1 className="text-6xl font-black text-slate-900 tracking-tighter leading-none">{user.is_hoc ? 'HOC COMMAND' : 'STUDENT UNIT'}</h1>
+          <h1 className="text-4xl sm:text-6xl font-black text-slate-900 tracking-tighter leading-none">{user.is_hoc ? 'HOC COMMAND' : 'STUDENT UNIT'}</h1>
         </div>
         <div className="hidden lg:block text-right">
-           <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.5em]">System Latency: 18ms</p>
+           <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.5em]">System Latency: 12ms</p>
            <p className="text-slate-900 font-mono text-xs font-bold mt-1">STATUS: ONLINE_ENCRYPTED</p>
         </div>
       </header>

@@ -74,7 +74,7 @@ const App: React.FC = () => {
             />
             <Route 
               path="/" 
-              element={user ? <Dashboard user={user} /> : <Navigate to="/login" />} 
+              element={user ? <Dashboard user={user} onUpdateUser={setUser} /> : <Navigate to="/login" />} 
             />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
