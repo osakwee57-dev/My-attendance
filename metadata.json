@@ -1,0 +1,7 @@
+{
+  "name": "EduAttend Pro",
+  "description": "A high-performance attendance management system with custom Supabase authentication, signature storage, and AI-powered insights.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
