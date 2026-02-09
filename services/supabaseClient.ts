@@ -50,15 +50,15 @@ export const handleRegister = async (
 /**
  * Fetch Department Roster
  */
-export const fetchDepartmentRoster = async (department: string) => {
+export const fetchDepartmentRoster = async (department: string): Promise<Profile[]> => {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, name, matric_number, level, department')
+    .select('id, name, matric_number, level, department, is_hoc')
     .eq('department', department)
     .eq('is_hoc', false);
 
   if (error) throw error;
-  return data;
+  return (data as Profile[]) || [];
 };
 
 /**

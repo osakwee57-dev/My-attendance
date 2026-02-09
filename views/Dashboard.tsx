@@ -33,87 +33,88 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [entryCode, setEntryCode] = useState('');
   const [isSigning, setIsSigning] = useState(false);
 
-  // 1. HOC Session Recovery Logic (Requested pattern)
-  useEffect(() => {
-    if (user.is_hoc) {
-      const checkActiveSession = async () => {
-        const { data, error } = await supabase
+  const loadData = async () => {
+    if (!user.department) return;
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const rosterData = await fetchDepartmentRoster(user.department);
+      setRoster(rosterData);
+
+      if (user.is_hoc) {
+        const { data: sessionData } = await supabase
           .from('attendance_sessions')
           .select('*')
           .eq('hoc_id', user.id)
           .eq('is_active', true)
-          .maybeSingle(); // Looks for one active session
+          .maybeSingle();
 
-        if (data) {
-          setActiveSession(data);
-          // Sync history too
-          const { data: history } = await supabase
-            .from('attendance_sessions')
-            .select('*')
-            .eq('hoc_id', user.id)
-            .eq('is_active', false)
-            .order('created_at', { ascending: false })
-            .limit(5);
-          setRecentSessions(history || []);
+        if (sessionData) {
+          setActiveSession(sessionData);
         }
-      };
-      checkActiveSession();
-    }
-  }, [user.id, user.is_hoc]);
 
-  // 2. Student Initial Check & Real-time Listener (Requested pattern)
-  useEffect(() => {
-    if (!user.is_hoc) {
-      // 1. Initial Check on Load
-      const fetchActive = async () => {
-        const { data } = await supabase
+        const { data: history } = await supabase
+          .from('attendance_sessions')
+          .select('*')
+          .eq('hoc_id', user.id)
+          .eq('is_active', false)
+          .order('created_at', { ascending: false })
+          .limit(5);
+        setRecentSessions(history || []);
+      } else {
+        const { data: activeAlert } = await supabase
           .from('attendance_sessions')
           .select('*')
           .eq('department', user.department)
           .eq('level', user.level)
           .eq('is_active', true)
           .maybeSingle();
-        if (data) setActiveNotice(data);
-      };
-      fetchActive();
+        
+        if (activeAlert) {
+          setActiveNotice(activeAlert);
+        }
+      }
+    } catch (err: any) {
+      console.error("Dashboard sync failed:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      // 2. Real-time Listener (Listen for "New" sessions)
+  useEffect(() => {
+    if (user && user.department) {
+      loadData();
+
+      // Real-time Listeners
       const channel = supabase
-        .channel('student-alerts')
+        .channel('attendance-events')
         .on('postgres_changes', { 
-          event: 'INSERT', 
-          schema: 'public', 
-          table: 'attendance_sessions' 
+            event: 'INSERT', 
+            schema: 'public', 
+            table: 'attendance_sessions',
+            filter: `department=eq.${user.department}` 
         }, (payload) => {
-          if (payload.new.is_active && 
-              payload.new.department === user.department && 
-              payload.new.level === user.level) {
-            setActiveNotice(payload.new);
-          }
+            const session = payload.new as any;
+            if (session.is_active && session.level === user.level && !user.is_hoc) {
+                setActiveNotice(session);
+            }
         })
         .on('postgres_changes', { 
           event: 'UPDATE', 
           schema: 'public', 
           table: 'attendance_sessions' 
         }, (payload) => {
-          // If a session is closed, remove notice
-          if (payload.new.id === activeNotice?.id && !payload.new.is_active) {
-            setActiveNotice(null);
-            setShowCodeInput(false);
+          const session = payload.new as any;
+          if (!session.is_active) {
+            if (!user.is_hoc && activeNotice?.id === session.id) {
+              setActiveNotice(null);
+              setShowCodeInput(false);
+            }
           }
         })
         .subscribe();
 
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
-  }, [user.department, user.level, user.is_hoc, activeNotice?.id]);
-
-  useEffect(() => {
-    if (user && user.department) {
-      fetchDepartmentRoster(user.department).then(data => setRoster(data || []));
-      
       // Deep Link Join Handler
       const joinCode = searchParams.get('join');
       if (joinCode && !user.is_hoc) {
@@ -128,6 +129,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
             if (data) setActiveNotice(data);
           });
       }
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
     }
   }, [user, searchParams]);
 
@@ -200,15 +205,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
         .eq('id', activeSession.id);
 
       setActiveSession(null);
-      // Refresh history
-      const { data: history } = await supabase
-        .from('attendance_sessions')
-        .select('*')
-        .eq('hoc_id', user.id)
-        .eq('is_active', false)
-        .order('created_at', { ascending: false })
-        .limit(5);
-      setRecentSessions(history || []);
+      loadData();
     } catch (err) {
       setError("Failed to stop broadcast.");
     }

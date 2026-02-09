@@ -6,7 +6,7 @@ export interface Profile {
   password?: string;
   department: string;
   level: string;
-  is_hoc: boolean;
+  is_hoc?: boolean;
   signature_url?: string;
   created_at?: string;
 }
